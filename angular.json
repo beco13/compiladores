@@ -123,6 +123,10 @@
           }
         }
       }
-    }},
-  "defaultProject": "compiladores"
+    }
+  },
+  "defaultProject": "compiladores",
+  "cli": {
+    "analytics": "d876414b-8e91-4ecf-98d4-5367b99602bb"
+  }
 }
