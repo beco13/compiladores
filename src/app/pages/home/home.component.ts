@@ -11,10 +11,13 @@ export class HomeComponent implements OnInit {
 
     tokens: Array<Token>;
     codigo: string;
+    textoSalida: Array<string>;
 
     constructor(public analizadorLexicoService: AnalizadorLexicoService) { 
-        this.tokens = [];
         this.codigo = "";
+        this.tokens = [];
+        this.textoSalida = [];
+        // this.textoSalida = ["hola mudno", "hola a todos", "un saludo"];
     }
 
     ngOnInit(): void {

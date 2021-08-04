@@ -13,67 +13,96 @@
         </div>
         <div class="col-8">
 
-            <form>
-                <div class="mb-3">
-                    <label for="inputTextLexical" class="form-label">
-                        Código
-                    </label>
-                    <textarea [(ngModel)]="codigo" name="codig_fuente" class="form-control" id="inputTextLexical" aria-describedby="textLexHelp" cols="30" rows="10"></textarea>
-                    <div id="textLexHelp" class="form-text">
-                        Ingrese el código a analizar lexicamente
+            <section>
+
+                <form>
+                    <div class="mb-3">
+                        <label for="inputTextLexical" class="form-label">
+                            Código
+                        </label>
+                        <textarea [(ngModel)]="codigo" name="codig_fuente" class="form-control" id="inputTextLexical" aria-describedby="textLexHelp" cols="30" rows="10"></textarea>
+                        <div id="textLexHelp" class="form-text">
+                            Ingrese el código a analizar lexicamente
+                        </div>
                     </div>
+                    <div class="text-center">
+                        <button type="type" class="btn btn-warning btn-lg" (click)="onAnalizar()" [hidden]="codigo.length == 0">
+                            Analizar código
+                        </button>
+                    </div>
+                </form>
+
+            </section>
+
+            <section>
+
+                <br>
+                <hr>
+                <br>
+
+                <h3>
+                    Salida
+                </h3>
+                <br>
+                <div>
+                    <p *ngFor="let texto of textoSalida">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-reception-1" viewBox="0 0 16 16">
+                            <path d="M0 11.5a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1-.5-.5v-2zm4 2a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1h-2a.5.5 0 0 1-.5-.5zm4 0a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1h-2a.5.5 0 0 1-.5-.5zm4 0a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1h-2a.5.5 0 0 1-.5-.5z"/>
+                        </svg> {{texto}}
+                    </p>
                 </div>
-                <div class="text-center">
-                    <button type="type" class="btn btn-warning btn-lg" (click)="onAnalizar()" [hidden]="codigo.length == 0">
-                        Analizar código
-                    </button>
-                </div>
-            </form>
 
-            <br>
-            <hr>
-            <br>
-            <h3>
-                Resultado
-            </h3>
-            <br>
+            </section>
 
+            <section>
 
-            <table class="table table-striped">
-                <thead>
-                    <tr>
-                        <th>
-                            Lexema
-                        </th>
-                        <th>
-                            Categoria
-                        </th>
-                        <th>
-                            Fila
-                        </th>
-                        <th>
-                            Columna
-                        </th>
-                    </tr>
-                </thead>
-                <tbody>
-                    
-                    <tr *ngFor="let token of tokens">
-                        <td>
-                            {{token.lexema}}
-                        </td>
-                        <td>
-                            {{token.categoria}}
-                        </td>
-                        <td>
-                            {{token.fila}}
-                        </td>
-                        <td>
-                            {{token.columna}}
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
+                <br>
+                <hr>
+                <br>
+                <h3>
+                    Tokens
+                </h3>
+                <br>
+    
+    
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>
+                                Lexema
+                            </th>
+                            <th>
+                                Categoria
+                            </th>
+                            <th>
+                                Fila
+                            </th>
+                            <th>
+                                Columna
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        
+                        <tr *ngFor="let token of tokens">
+                            <td>
+                                {{token.lexema}}
+                            </td>
+                            <td>
+                                {{token.categoria}}
+                            </td>
+                            <td>
+                                {{token.fila}}
+                            </td>
+                            <td>
+                                {{token.columna}}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+    
+            </section>
+
 
         </div>
         <div class="col-2">

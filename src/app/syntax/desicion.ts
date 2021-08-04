@@ -1,12 +1,15 @@
+import { Expresion } from "./expresion";
 import { Sentencia } from "./sentencia";
 
 export class Desicion {
     
-    expresionLogica: Array<any>;
+    expresion: Expresion;
     bloqueSentencias: Array<Sentencia>;
+    bloqueSentenciasSino: Array<Sentencia>;
 
     constructor() {
-        this.expresionLogica = [];
+        this.expresion = null;
         this.bloqueSentencias = [];
+        this.bloqueSentenciasSino = [];
     }
 }

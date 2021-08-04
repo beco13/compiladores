@@ -1,14 +1,15 @@
 import { Token } from "../entities/token";
 import { Expresion } from "./expresion";
 
-export class ExpresionLogica extends Expresion {
+export class ExpresionCadena extends Expresion {
 
-    operadorLogico: Token;
+    operadorConcatenador: Token;
 
     constructor(){
 
         super();
 
-        this.operadorLogico = null;
+        this.operadorConcatenador = null;
     }
+
 }

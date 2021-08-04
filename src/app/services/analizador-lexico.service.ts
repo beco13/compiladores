@@ -27,8 +27,7 @@ export class AnalizadorLexicoService {
         this.iterador = 0;
         this.fila = 0;
         this.columna = 0;
-
-        this.palabrasReservadas = ["accion", "cadena", "constante", "doble", "devolucion", "entero", "flotante", "hacer", "mientras", "para", "potencia", "raiz", "si", "sino", "variable", ','];
+        this.palabrasReservadas = ["accion", "cadena", "constante", "doble", "devolucion", "entero", "flotante", "hacer", "mientras", "para", "potencia", "raiz", "si", "sino", "variable", "muestre"];
         this.agrupadores = ["(", ")", "{", "}", "[", "]"];
         this.operadoresAritmeticos = ['+', '-', '/', '*', '%'];
         this.operadoresAsignacion = ['+=', '-=', '='];
@@ -40,6 +39,10 @@ export class AnalizadorLexicoService {
         return this.tokens;
     }
 
+    /**
+     * Se encarga de revisar el texto ingresado y clasificar caractere a caracter
+     * @param codigo 
+     */
     public analizar(codigo: string) {
 
 
@@ -131,12 +134,23 @@ export class AnalizadorLexicoService {
                 continue;
             }
 
+            if (this.sigueSeparador()) {
+                continue;
+            }
+
+            if(this.sigueConcatenacion()){
+                continue;
+            }
 
             this.sigueTokenDesconocido();
 
         }
     }
 
+    /**
+     * Permite verificar si los caracteres que siguen se pueden clasificar como un identificador
+     * @returns 
+     */
     private sigueIdentificador() {
 
         // si empeiza con arroba es por que es identificador
@@ -153,6 +167,7 @@ export class AnalizadorLexicoService {
         } while (this.esLetraMay(this.codigo.charAt(this.iterador + subIterador)) || this.esLetraMin(this.codigo.charAt(this.iterador + subIterador)) || this.esDigito(this.codigo.charAt(this.iterador + subIterador)));
 
 
+        // validamos que no tenga mas de 10 caracteres como identificador
         if (subIterador <= 10 && subIterador > 1) {
 
             const tmpToken = new Token();
@@ -171,11 +186,16 @@ export class AnalizadorLexicoService {
         return false;
     }
 
+    /**
+     * Permite verificar si los caracteres que siguen se pueden clasificar como un entero
+     * @returns 
+     */
     private sigueEntero() {
 
-        // verificamos que si se empieze con signo o con numero
+        // verificamos si el primer caracter es signo
         const esSigno = this.codigo.charAt(this.iterador) === "-" || this.codigo.charAt(this.iterador) == "+";
 
+        // verificamos si el primer caracter es signo o es numero
         const validacionInicial = esSigno || this.esDigito(this.codigo.charAt(this.iterador))
 
         if (!validacionInicial) {
@@ -185,13 +205,16 @@ export class AnalizadorLexicoService {
         let subIterador = 0;
         let lexema = "";
 
+        // recorremos los caracteres y vamos verificando que cada caracter que siga sea numero para anexarlo al actual lexema
         do {
             lexema += this.codigo.charAt(this.iterador + subIterador);
             subIterador += 1;
         } while (this.esDigito(this.codigo.charAt(this.iterador + subIterador)));
 
-        if (subIterador > 1 && (this.esAgrupador(this.codigo.charAt(this.iterador + subIterador)) || this.codigo.charAt(this.iterador + subIterador) == " " || this.codigo.charAt(this.iterador + subIterador) == "\n")) {
+        // verificamos el resultado armado
+        const esEntero =  subIterador > (esSigno ? 1 : 0) && this.codigo.charAt(this.iterador + subIterador) != ".";
 
+        if (esEntero) {
             const tmpToken = new Token();
             tmpToken.lexema = lexema;
             tmpToken.categoria = Categoria.NUMERO_ENTERO;
@@ -208,9 +231,13 @@ export class AnalizadorLexicoService {
         return false;
     }
 
+    /**
+     * Permite verificar si los caracteres que siguen se pueden clasificar como un decimal
+     * @returns 
+     */
     private sigueDecimal() {
 
-        // verificamos que si se empieze con signo o con numero o con punto
+        // verificamos que empieze con signo o con numero o con punto
         const esSigno = this.codigo.charAt(this.iterador) === "-" || this.codigo.charAt(this.iterador) == "+";
         if (!esSigno && !this.esDigito(this.codigo.charAt(this.iterador))) {
             return false;
@@ -236,8 +263,9 @@ export class AnalizadorLexicoService {
             subIterador += 1;
         } while (this.esDigito(this.codigo.charAt(this.iterador + subIterador)) || this.codigo.charAt(this.iterador + subIterador) === '.');
 
+        const esDecimal = subIterador > (esSigno ? 1 : 0);
 
-        if (subIterador > 1 && (this.esAgrupador(this.codigo.charAt(this.iterador + subIterador)) || this.codigo.charAt(this.iterador + subIterador) == " " || this.codigo.charAt(this.iterador + subIterador) == "\n")) {
+        if (esDecimal) {
 
             const tmpToken = new Token();
             tmpToken.lexema = lexema;
@@ -255,6 +283,10 @@ export class AnalizadorLexicoService {
         return false;
     }
 
+    /**
+     * Permite verificar si los caracteres que siguen pertenecen a una palabra reservada
+     * @returns 
+     */
     private siguePalabraReservada() {
 
         // variable para indentificar sobre que palabra se esta comparando
@@ -317,6 +349,10 @@ export class AnalizadorLexicoService {
         return false;
     }
 
+    /**
+     * Permite verificar si los caracteres que siguen son de tipo operador artimetico
+     * @returns 
+     */
     private sigueOperadorAritmetico() {
 
         if (!this.operadoresAritmeticos.includes(this.codigo.charAt(this.iterador))) {
@@ -339,6 +375,10 @@ export class AnalizadorLexicoService {
         return true;
     }
 
+    /**
+     * Permite verificar si los caracteres que siguen son de tipo operador de asignacion
+     * @returns 
+     */
     private sigueOperadorAsignacion() {
 
         // variable para indentificar sobre que palabra se esta comparando
@@ -399,6 +439,10 @@ export class AnalizadorLexicoService {
         }
     }
 
+    /**
+     * Permite verificar si los caracteres que siguen se pueden clasificar como operador de incremento
+     * @returns 
+     */
     private sigueOperadorIncremento() {
 
         if (this.codigo.charAt(this.iterador) !== "+") {
@@ -421,6 +465,10 @@ export class AnalizadorLexicoService {
         return true;
     }
 
+    /**
+     * Permite verificar si los caracteres que siguen se pueden clasificar como operador de decremento
+     * @returns 
+     */
     private sigueOperadorDecremento() {
 
         if (this.codigo.charAt(this.iterador) !== "-") {
@@ -443,6 +491,10 @@ export class AnalizadorLexicoService {
         return true;
     }
 
+    /**
+     * Permite verificar si los caracteres que siguen se pueden clasificar como operador relacional
+     * @returns 
+     */
     private sigueOperadorRelacional() {
 
         // variable para indentificar sobre que palabra se esta comparando
@@ -503,6 +555,9 @@ export class AnalizadorLexicoService {
         }
     }
 
+    /**
+     * Permite verificar si los caracteres que siguen se pueden clasificar como operador logico
+     */
     private sigueOperadorLogico() {
 
         // variable para indentificar sobre que palabra se esta comparando
@@ -563,6 +618,10 @@ export class AnalizadorLexicoService {
         }
     }
 
+    /**
+     * Permite verificar si los caracteres que siguen se pueden clasificar como fin de sentencia
+     * @returns 
+     */
     private sigueFinSentencia() {
 
         if (this.codigo.charAt(this.iterador) !== "#") {
@@ -581,6 +640,10 @@ export class AnalizadorLexicoService {
         return true;
     }
 
+    /**
+     * Permite verificar si los caracteres que siguen se pueden clasificar como agrupador
+     * @returns 
+     */
     private sigueAgrupador() {
 
         if (!this.agrupadores.includes(this.codigo.charAt(this.iterador))) {
@@ -599,6 +662,10 @@ export class AnalizadorLexicoService {
         return true;
     }
 
+    /**
+     * Permite verificar si los caracteres que siguen se pueden clasificar como cadena caracteres
+     * @returns 
+     */
     private sigueCadenaCaracteres() {
 
         // si empeiza con "~" es por que es cadena
@@ -641,6 +708,10 @@ export class AnalizadorLexicoService {
         return false;
     }
 
+    /**
+     * Permite verificar si los caracteres que siguen se pueden clasificar como un caracter
+     * @returns 
+     */
     private sigueCadenaCaracter() {
 
         // si empeiza con "~" es por que es cadena
@@ -683,6 +754,10 @@ export class AnalizadorLexicoService {
         return false;
     }
 
+    /**
+     * Permite verificar si los caracteres que siguen se pueden clasificar como comentario de bloque
+     * @returns 
+     */
     private sigueComentarioBloque() {
 
         // si empeiza con "~" es por que es cadena
@@ -725,6 +800,10 @@ export class AnalizadorLexicoService {
         return false;
     }
 
+    /**
+     * Permite verificar si los caracteres que siguen se pueden clasificar como comentario de linea
+     * @returns 
+     */
     private sigueComentarioLinea() {
 
         // si empeiza con "~" es por que es cadena
@@ -759,6 +838,55 @@ export class AnalizadorLexicoService {
         return true;
     }
 
+    /**
+     * Verifica si es un lexema de categoria SEPARADOR
+     * @returns 
+     */
+    private sigueSeparador(){
+        const caracteresSeparadores = [",", ";"];
+        if(!caracteresSeparadores.includes(this.codigo.charAt(this.iterador))){
+            return false;
+        }
+        const tmpToken = new Token();
+        tmpToken.lexema = this.codigo.charAt(this.iterador);
+        tmpToken.categoria = Categoria.SEPARADOR;
+        tmpToken.fila = this.fila;
+        tmpToken.columna = this.columna;
+
+        this.tokens.push(tmpToken);
+        this.iterador += 1;
+        this.columna += 1;
+
+        return true;
+    }
+
+    /**
+     * Verifica si es un lexema de categoria concatenacion
+     * @returns 
+     */
+    private sigueConcatenacion(){
+
+        // si empeiza con "~" es por que es cadena
+        if (this.codigo.charAt(this.iterador) !== "·") {
+            return false;
+        }
+
+        const tmpToken = new Token();
+        tmpToken.lexema = this.codigo.charAt(this.iterador);
+        tmpToken.categoria = Categoria.CONCATENACION;
+        tmpToken.fila = this.fila;
+        tmpToken.columna = this.columna;
+
+        this.tokens.push(tmpToken);
+        this.iterador += 1;
+        this.columna += 1;
+
+        return true;
+    }
+
+    /**
+     * Permite verificar si los caracteres que siguen se clasifica como desconocidos
+     */
     private sigueTokenDesconocido() {
 
         let subIterador = 0;
@@ -781,20 +909,40 @@ export class AnalizadorLexicoService {
         this.columna += subIterador;
     }
 
+    /**
+     * verifica si el caracteres a evaluar es de tipo agrupador
+     * @param charAt 
+     * @returns 
+     */
     private esAgrupador(charAt: string) {
         return this.agrupadores.includes(charAt);
     }
 
+    /**
+     * verifica si el caracter a evaluar es letra mayuscula
+     * @param caracter 
+     * @returns 
+     */
     private esLetraMay(caracter: string) {
         const expPatter = new RegExp('[A-Z]');
         return expPatter.test(caracter);
     }
 
+    /**
+     * verifica si el caracter a evaluar es letra minusculas
+     * @param caracter 
+     * @returns 
+     */
     private esLetraMin(caracter: string) {
         const expPatter = new RegExp('[a-z]');
         return expPatter.test(caracter);
     }
 
+    /**
+     * verifica si el caracter a evaluar es un digito
+     * @param caracter 
+     * @returns 
+     */
     private esDigito(caracter: string) {
         const expPatter = new RegExp('[0-9]');
         return expPatter.test(caracter);
