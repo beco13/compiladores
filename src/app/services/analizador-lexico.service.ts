@@ -646,15 +646,48 @@ export class AnalizadorLexicoService {
      */
     private sigueAgrupador() {
 
-        if (!this.agrupadores.includes(this.codigo.charAt(this.iterador))) {
+        const chart = this.codigo.charAt(this.iterador);
+
+        if (!this.agrupadores.includes(chart)) {
             return false;
         }
 
+
         const tmpToken = new Token();
         tmpToken.lexema = this.codigo.charAt(this.iterador);
-        tmpToken.categoria = Categoria.AGRUPADOR;
         tmpToken.fila = this.fila;
         tmpToken.columna = this.columna;
+
+
+        switch (chart) {
+            case "(":
+                tmpToken.categoria = Categoria.PARENTESIS_IZQUIERDO;
+                break;
+
+            case ")":
+                tmpToken.categoria = Categoria.PARENTESIS_DERECHO;
+                break;
+
+            case "{":
+                tmpToken.categoria = Categoria.LLAVE_IZQUIERDO;
+                break;
+
+            case "}":
+                tmpToken.categoria = Categoria.LLAVE_DERECHO;
+                break;
+
+            case "[":
+                tmpToken.categoria = Categoria.CORCHETE_IZQUIERDO;
+                break;
+
+            case "]":
+                tmpToken.categoria = Categoria.CORCHETE_DERECHO;
+                break;
+        
+            default:
+                break;
+        }
+
 
         this.tokens.push(tmpToken);
         this.iterador += 1;
@@ -843,15 +876,32 @@ export class AnalizadorLexicoService {
      * @returns 
      */
     private sigueSeparador(){
-        const caracteresSeparadores = [",", ";"];
-        if(!caracteresSeparadores.includes(this.codigo.charAt(this.iterador))){
+        const caracteresSeparadores = [",", ";", ':'];
+        const chart = this.codigo.charAt(this.iterador);
+
+        if(!caracteresSeparadores.includes(chart)){
             return false;
         }
+
         const tmpToken = new Token();
-        tmpToken.lexema = this.codigo.charAt(this.iterador);
-        tmpToken.categoria = Categoria.SEPARADOR;
+        tmpToken.lexema = chart;
         tmpToken.fila = this.fila;
         tmpToken.columna = this.columna;
+
+        switch (chart) {
+            case ":":
+                tmpToken.categoria = Categoria.DOS_PUNTOS;
+                break;
+            case ",":
+                tmpToken.categoria = Categoria.COMA;
+                break;
+            case ";":
+                tmpToken.categoria = Categoria.PUNTO_COMA;
+                break;
+        
+            default:
+                break;
+        }
 
         this.tokens.push(tmpToken);
         this.iterador += 1;
