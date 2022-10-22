@@ -27,7 +27,7 @@ export class AnalizadorLexicoService {
         this.iterador = 0;
         this.fila = 0;
         this.columna = 0;
-        this.palabrasReservadas = ["accion", "cadena", "constante", "doble", "devolucion", "entero", "flotante", "hacer", "mientras", "para", "potencia", "raiz", "si", "sino", "variable", "muestre"];
+        this.palabrasReservadas = ["accion", "cadena", "constante", "doble", "devolucion", "entero", "flotante", "hacer", "mientras", "para", "potencia", "raiz", "si", "sino", "variable", "muestre", "leer"];
         this.agrupadores = ["(", ")", "{", "}", "[", "]"];
         this.operadoresAritmeticos = ['+', '-', '/', '*', '%'];
         this.operadoresAsignacion = ['+=', '-=', '='];

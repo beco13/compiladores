@@ -7,13 +7,15 @@ import { HomeComponent } from './pages/home/home.component';
 import { CreditosComponent } from './pages/creditos/creditos.component';
 import { PageNotFoundComponent } from './pages/page-not-found/page-not-found.component';
 import { FormsModule } from '@angular/forms';
+import { ArbolComponent } from './components/arbol/arbol.component';
 
 @NgModule({
     declarations: [
         AppComponent,
         HomeComponent,
         CreditosComponent,
-        PageNotFoundComponent
+        PageNotFoundComponent,
+        ArbolComponent
     ],
     imports: [
         BrowserModule,

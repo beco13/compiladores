@@ -1,32 +1,41 @@
 import { NodoArbol } from "../entities/nodo-arbol";
 import { Token } from "../entities/token";
+import { Arreglo } from "./arreglo";
 import { Expresion } from "./expresion";
 import { InvocacionFuncion } from "./invocacion-funcion";
 import { Sentencia } from "./sentencia";
 
-export class Devolucion extends Sentencia {
+export class DeclaracionConstante extends Sentencia{
 
-    valor: Expresion | InvocacionFuncion | Token;
+    constante: Token;
+    valor: Token | Expresion | Arreglo | InvocacionFuncion;
 
     constructor() {
         super();
+        this.constante = null;
         this.valor = null;
     }
 
+    
     getNodoArbol(): NodoArbol {
 
         const nodo = new NodoArbol();
-        nodo.nombre = "Devolucion";
+        nodo.nombre = "Declaracion Constante";
+
+        const subNodo = new NodoArbol();
+        subNodo.nombre = "Nombre Constante: " + this.constante.lexema;
+        nodo.hijos.push(subNodo);
         
-        if(this.valor instanceof Token){
+        if (this.valor instanceof Token) {
             const subNodo = new NodoArbol();
             subNodo.nombre = "Valor: " +  this.valor.lexema;
             nodo.hijos.push(subNodo);
-        }else{
+        } else {
             nodo.hijos.push(this.valor.getNodoArbol());
         }
 
         return nodo;
     }
+
 
 }
