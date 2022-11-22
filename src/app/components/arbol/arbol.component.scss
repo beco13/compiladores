@@ -1,0 +1,18 @@
+ul,
+li {
+    list-style-type: none;
+}
+
+strong{
+    cursor: pointer;
+}
+
+ul{
+    transition: all 1s;
+    display: block;
+    margin-left: 5px;
+}
+
+ul.closed{
+    display: none;
+}

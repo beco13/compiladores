@@ -20,7 +20,7 @@
                         <label for="inputTextLexical" class="form-label">
                             Código
                         </label>
-                        <textarea [(ngModel)]="codigo" name="codig_fuente" class="form-control" id="inputTextLexical" aria-describedby="textLexHelp" cols="30" rows="10"></textarea>
+                        <textarea [(ngModel)]="codigo" name="codig_fuente" class="form-control" id="inputTextLexical" aria-describedby="textLexHelp" rows="35"></textarea>
                         <div id="textLexHelp" class="form-text">
                             Ingrese el código a analizar lexicamente
                         </div>
@@ -34,10 +34,7 @@
 
             </section>
 
-
-            
-            <section>
-
+            <section *ngIf="errores.length > 0">
                 <br>
                 <hr>
                 <br>
@@ -46,9 +43,31 @@
                 </h3>
                 <br>
     
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>
+                                Error
+                            </th>
+                            <th>
+                                Fila
+                            </th>
+                            <th>
+                                Columna
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr *ngFor="let error of errores">
+                            <td> {{ error.error}} </td>
+                            <td> {{ error.fila}} </td>
+                            <td> {{ error.columna}} </td>
+                        </tr>
+                    </tbody>
+                </table>
+
     
             </section>
-
 
         </div>
         <div class="col-2">
@@ -73,6 +92,9 @@
                     <thead>
                         <tr>
                             <th>
+                                #
+                            </th>
+                            <th>
                                 Lexema
                             </th>
                             <th>
@@ -88,7 +110,10 @@
                     </thead>
                     <tbody>
                         
-                        <tr *ngFor="let token of tokens">
+                        <tr *ngFor="let token of tokens; let i = index">
+                            <td>
+                                {{i + 1}}
+                            </td>
                             <td>
                                 {{token.lexema}}
                             </td>
@@ -117,16 +142,11 @@
                 <br>
 
                 <h3>
-                    Salida
+                    Arbol
                 </h3>
                 <br>
-                <div>
-                    <p *ngFor="let texto of textoSalida">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-reception-1" viewBox="0 0 16 16">
-                            <path d="M0 11.5a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1-.5-.5v-2zm4 2a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1h-2a.5.5 0 0 1-.5-.5zm4 0a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1h-2a.5.5 0 0 1-.5-.5zm4 0a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1h-2a.5.5 0 0 1-.5-.5z"/>
-                        </svg> {{texto}}
-                    </p>
-                </div>
+                
+                <app-arbol [nodo]="nodos"></app-arbol>
 
             </section>
 

@@ -27,7 +27,8 @@ export class AnalizadorLexicoService {
         this.iterador = 0;
         this.fila = 0;
         this.columna = 0;
-        this.palabrasReservadas = ["accion", "cadena", "constante", "doble", "devolucion", "entero", "flotante", "hacer", "mientras", "para", "potencia", "raiz", "si", "sino", "variable", "muestre", "leer"];
+        //this.palabrasReservadas = ["accion", "constante", "devolucion", "hacer", "mientras", "para", "potencia", "raiz", "si", "sino", "variable", "muestre", "leer", "decimal", "entero", "cadena", "caracter", ""];
+        this.palabrasReservadas = ["accion", "hacer", "mientras", "si", "sino", "constante", "variable", "devolucion", "muestre", "leer", "decimal", "entero", "cadena", "caracter", "booleano", "falso", "verdadero"];
         this.agrupadores = ["(", ")", "{", "}", "[", "]"];
         this.operadoresAritmeticos = ['+', '-', '/', '*', '%'];
         this.operadoresAsignacion = ['+=', '-=', '='];
@@ -72,7 +73,6 @@ export class AnalizadorLexicoService {
             if (this.sigueIdentificador()) {
                 continue;
             }
-
 
             if (this.sigueOperadorIncremento()) {
                 continue;

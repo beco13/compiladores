@@ -1,4 +1,4 @@
-import { Injectable } from '@angular/core';
+import { EventEmitter, Injectable } from '@angular/core';
 import { CompilacionError } from '../entities/compilacion-error';
 import { Token } from '../entities/token';
 import { Categoria } from '../enums/categoria.enum';
@@ -21,6 +21,8 @@ import { DesicionCompuesta } from '../syntax/desicion-compuesta';
 import { Impresion } from '../syntax/impresion';
 import { Lectura } from '../syntax/lectura';
 import { UnidadCompilacion } from '../syntax/unidad-compilacion';
+import { ValorNumerico } from '../syntax/valor-numerico';
+import { ErroresService } from './errores.service';
 
 @Injectable({
     providedIn: 'root'
@@ -28,14 +30,16 @@ import { UnidadCompilacion } from '../syntax/unidad-compilacion';
 export class AnalizadorSintacticoService {
 
     private tokens: Array<Token>;
-    private errores: Array<CompilacionError>;
     private indexToken: number;
     private tokenActual: Token;
+    private uc: UnidadCompilacion;
+    public onFinish: EventEmitter<void>;
 
-    constructor() {
+    constructor(private erroresService: ErroresService) {
         this.tokens = [];
-        this.errores = [];
         this.indexToken = null
+        this.uc = null;
+        this.onFinish = new EventEmitter();
     }
 
     /**
@@ -47,18 +51,36 @@ export class AnalizadorSintacticoService {
         this.indexToken = 0;
         if (tokens.length > 0) {
             this.tokenActual = tokens[0];
-            this.revisarSiSigueComentario();
+            if (this.SigueComentario()) {
+                this.cargarSiguienteToken();
+            }
         } else {
             this.tokenActual = null;
         }
     }
 
     /**
-     * Permite que se obtenga los errores desde afuera de la clase
-     * @returns Array<CompilacionError>
+     * Permite ejeuctar el analizador sintactico
+     * @param onFinish 
      */
-    public getErrores(): Array<CompilacionError> {
-        return this.errores;
+    public analizar(): void {
+        this.erroresService.reset();
+        this.uc = this.sigueUnidadCompilacion();
+        // notificamos que terminamos
+        this.onFinish.emit();
+    }
+
+    /**
+     * permite obtener la unidad de compilacion
+     * @returns 
+     */
+    public getUnidadCompilacion(): UnidadCompilacion {
+        return this.uc;
+    }
+
+    private debugCurrentToken(id: string = "") {
+        console.info(id + " Current token: ", this.tokenActual);
+        console.info(id + " Current index: ", this.indexToken);
     }
 
     /**
@@ -71,28 +93,52 @@ export class AnalizadorSintacticoService {
         comError.error = mensaje;
         comError.fila = this.tokenActual.fila;
         comError.columna = this.tokenActual.columna;
+        this.erroresService.agregar(comError);
+    }
 
-        this.errores.push(comError);
+    /**
+     * Permite verificar si hay mas tokens por revisar
+     * @returns 
+     */
+    private hayMasTokens(): boolean {
+        return (this.indexToken + 1) < this.tokens.length;
     }
 
     /**
      * Permite cargar el siguiente token en la lista de tokens
      */
     private cargarSiguienteToken() {
-        this.indexToken++;
-        if (this.indexToken < this.tokens.length) {
+        //console.trace();
+
+        if (this.hayMasTokens()) {
+
+            this.indexToken++;
             this.tokenActual = this.tokens[this.indexToken];
-            this.revisarSiSigueComentario();
+
+
+            if (this.SigueComentario()) {
+                return this.cargarSiguienteToken();
+            } else {
+                return true;
+            }
         }
+        return false;
+    }
+
+    /**
+     * permite restablecer el cursor de la iteracion de los tokens
+     * @param index 
+     */
+    private resetIndexToken(index: number) {
+        this.indexToken = index;
+        this.tokenActual = this.tokens[this.indexToken];
     }
 
     /**
      * Permite verificar si sigue un comentario
      */
-    private revisarSiSigueComentario() {
-        if (this.sigueComentarioLinea() || this.sigueComentarioBloque()) {
-            this.cargarSiguienteToken();
-        }
+    private SigueComentario(): boolean {
+        return this.sigueComentarioLinea() || this.sigueComentarioBloque();
     }
 
     /**
@@ -129,7 +175,7 @@ export class AnalizadorSintacticoService {
      * @returns Token
      */
     private sigueTipoDato(): Token {
-        const tipoDatos = ["cadena", "caracter", "entero", "decimal"];
+        const tipoDatos = ["cadena", "caracter", "entero", "decimal", "booleano"];
         if (this.tokenActual.categoria === Categoria.PALABRA_RESERVADA && tipoDatos.includes(this.tokenActual.lexema)) {
             return this.tokenActual;
         }
@@ -249,18 +295,28 @@ export class AnalizadorSintacticoService {
      * 
      * @returns Token
      */
-    private sigueValorNumerico(): Token {
+    private sigueValorNumerico(): ValorNumerico {
 
-        let tmpNumero = this.sigueNumeroDecimal();
-        if (tmpNumero !== null) {
-            return tmpNumero;
+        let tmpIndexToken = this.indexToken;
+        const tmpVN = new ValorNumerico();
+
+        tmpVN.signo = this.sigueSigno();
+        if (tmpVN.signo !== null) {
+            this.cargarSiguienteToken();
         }
 
-        tmpNumero = this.sigueNumeroEntero();
-        if (tmpNumero !== null) {
-            return tmpNumero;
+        tmpVN.valor = this.sigueNumeroDecimal();
+        if (tmpVN.valor !== null) {
+            return tmpVN;
         }
 
+        tmpVN.valor = this.sigueNumeroEntero();
+        if (tmpVN.valor !== null) {
+            return tmpVN;
+        }
+
+        // reseteamos;
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -393,16 +449,54 @@ export class AnalizadorSintacticoService {
         return this.tokenActual.categoria === Categoria.OPERADOR_ASIGNACION;
     }
 
+    /**
+     * metodo que ayuda al teorema de la recursividad por la izquierda
+     * <EZ> ::= <EAZ> | <ERZ> | <ELZ>
+     * @returns 
+     */
+    private sigueEZ(): Expresion {
+
+        let tmpIndexToken = this.indexToken;
+        let tmpExpression: Expresion = new Expresion();
+
+        // <EAZ>
+        tmpExpression = this.sigueEAZ();
+        if (tmpExpression !== null) {
+            return tmpExpression;
+        }
+
+        // reset
+        this.resetIndexToken(tmpIndexToken);
+
+        // <ERZ>
+        tmpExpression = this.sigueERZ();
+        if (tmpExpression !== null) {
+            return tmpExpression;
+        }
+
+        // reset
+        this.resetIndexToken(tmpIndexToken);
+
+        // <ELZ>
+        tmpExpression = this.sigueELZ();
+        if (tmpExpression !== null) {
+            return tmpExpression;
+        }
+
+        // reset
+        this.resetIndexToken(tmpIndexToken);
+        return null;
+    }
 
     /**
      * metodo que ayuda al teorema de la recursividad por la izquierda
-     * <EAZ> ::= <OperadorAritmético> <ExpresionAritmetica> [<EAZ>]
+     * <EAZ> ::= <OperadorAritmético> <ExpresionAritmetica> [<EZ>]
      * @return Expresion
      */
     private sigueEAZ(): Expresion {
 
         let tmpIndexToken = this.indexToken;
-        let tmpExpression: Expresion;
+        let tmpExpression: Expresion = new Expresion();
 
         // <OperadorAritmético>
         let operadorAritmetico = this.sigueOperadorAritmetico();
@@ -413,96 +507,80 @@ export class AnalizadorSintacticoService {
             this.cargarSiguienteToken();
             const tmpExpressionB = this.sigueExpresionAritmetica();
             if (tmpExpressionB !== null) {
-                    
-                // [<EAZ>]
+                tmpIndexToken = this.indexToken;
+
+                // [<EZ>]
                 this.cargarSiguienteToken();
-                const eaz = this.sigueEAZ();
-                if (eaz !== null) {
-                    eaz.operandoA = tmpExpressionB;
-                    return eaz;
+                const ez = this.sigueEZ();
+                if (ez !== null) {
+                    ez.operandoA = tmpExpressionB;
+                    return ez;
                 } else {
+                    this.resetIndexToken(tmpIndexToken);
                     tmpExpression.operandoB = tmpExpressionB;
                     return tmpExpression;
                 }
-                
+
             }
         }
 
-        // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        // reseteamos
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
     /**
      * verifica si sigue una expresion Aritmeticador
      * 
-     * <ExpresionAritmetica> ::= <ExpresionAritmetica> <OperadorAritmético> <ExpresionAritmetica> | "(" <ExpresionAritmetica> ")" | <ValorNumerico> | <Variable> | <Constante>
-     * <ExpresionAritmetica> ::= <ValorNumerico> [<EAZ>] | <Variable> [<EAZ>] | <Constante> [<EAZ>] | "(" <ExpresionAritmetica> ")" [<EAZ>]
+     * <ExpresionAritmetica> ::= <ValorNumerico> [<EAZ>] | <Identificador> [<EAZ>] | "(" <ExpresionAritmetica> ")" [<EAZ>]
      * 
      * @returns Expresion | Token
      */
-    private sigueExpresionAritmetica(): Expresion | Token {
+    private sigueExpresionAritmetica(): Expresion | Token | ValorNumerico {
 
         let tmpIndexToken = this.indexToken;
-        let tmpExpression: Expresion | Token;
+        let tmpExpression: Expresion | Token | ValorNumerico;
 
-        // <Variable> 
-        tmpExpression = this.sigueVariable();
-        if (tmpExpression !== null) {
-
-            // [<EAZ>]
-            this.cargarSiguienteToken();
-            const eaz = this.sigueEAZ();
-            if (eaz !== null) {
-                eaz.operandoA = tmpExpression;
-                return eaz;
-            } else {
-                return tmpExpression;
-            }
-        }
-
-        // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
-
-        // <Constante> 
-        tmpExpression = this.sigueConstante();
-        if (tmpExpression !== null) {
-
-            // [<EAZ>]
-            this.cargarSiguienteToken();
-            const eaz = this.sigueEAZ();
-            if (eaz !== null) {
-                eaz.operandoA = tmpExpression;
-                return eaz;
-            } else {
-                return tmpExpression;
-            }
-        }
-
-        // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
-
-        /// <ValorNumerico> 
+        // <ValorNumerico> 
         tmpExpression = this.sigueValorNumerico();
         if (tmpExpression !== null) {
+            tmpIndexToken = this.indexToken;
+
             // [<EAZ>]
             this.cargarSiguienteToken();
+            //tmpIndexToken = this.indexToken;
             const eaz = this.sigueEAZ();
             if (eaz !== null) {
                 eaz.operandoA = tmpExpression;
                 return eaz;
             } else {
+                this.resetIndexToken(tmpIndexToken);
                 return tmpExpression;
             }
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
 
+        // <Identificador>
+        tmpExpression = this.sigueIdentificador();
+        if (tmpExpression !== null) {
+
+            // [<EAZ>]
+            this.cargarSiguienteToken();
+            //tmpIndexToken = this.indexToken;
+            const eaz = this.sigueEAZ();
+            if (eaz !== null) {
+                eaz.operandoA = tmpExpression;
+                return eaz;
+            } else {
+                this.resetIndexToken(tmpIndexToken);
+                return tmpExpression;
+            }
+        }
+
+        // reseteamos;
+        this.resetIndexToken(tmpIndexToken);
 
         // "(" <ExpresionAritmetica> ")"
         if (this.sigueParentesisIzquierdo()) {
@@ -513,37 +591,38 @@ export class AnalizadorSintacticoService {
 
                 this.cargarSiguienteToken();
                 if (this.sigueParentesisDerecho()) {
+                    tmpIndexToken = this.indexToken;
 
                     // [<EAZ>]
                     this.cargarSiguienteToken();
+                    //tmpIndexToken = this.indexToken;
                     const eaz = this.sigueEAZ();
                     if (eaz !== null) {
                         eaz.operandoA = tmpExpression;
                         return eaz;
                     } else {
+                        this.resetIndexToken(tmpIndexToken);
                         return tmpExpression;
                     }
-
                 }
             }
         }
 
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
     /**
      * metodo que ayuda al teorema de la recursividad por la izquierda
-     * <ERZ> ::= <OperadorRelacional> <ExpresionRelacional> [<ERZ>]
+     * <ERZ> ::= <OperadorRelacional> <ExpresionRelacional> [<EZ>]
      * @return Expresion
      */
-    private sigueERZ(): Expresion{
+    private sigueERZ(): Expresion {
 
         let tmpIndexToken = this.indexToken;
-        let tmpExpression: Expresion;
+        let tmpExpression: Expresion = new Expresion();
 
         // <OperadorRelacional>
         let operador = this.sigueOperadorRelacional();
@@ -554,95 +633,100 @@ export class AnalizadorSintacticoService {
             this.cargarSiguienteToken();
             const tmpExpressionB = this.sigueExpresionRelacional();
             if (tmpExpressionB !== null) {
-                    
-                // [<ERZ>]
+                tmpIndexToken = this.indexToken;
+
+                // [<EZ>]
                 this.cargarSiguienteToken();
-                const ez = this.sigueERZ();
+                //tmpIndexToken = this.indexToken;
+                const ez = this.sigueEZ();
                 if (ez !== null) {
                     ez.operandoA = tmpExpressionB;
                     return ez;
                 } else {
+                    this.resetIndexToken(tmpIndexToken);
                     tmpExpression.operandoB = tmpExpressionB;
                     return tmpExpression;
                 }
-                
             }
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
     /**
      * verifica si sigue una expresion Relacional
      * 
-     * <ExpresionRelacional> ::= <ExpresionRelacional> <OperadorRelacional> <ExpresionRelacional> | "("<ExpresionRelacional>")" | <CadenaCaracteres> | <ValorNumerico> | <Variable> | <Constante>
-     * <ExpresionRelacional> ::= "("<ExpresionRelacional>")" [<ERZ>] | <CadenaCaracteres>[<ERZ>] | <ValorNumerico>[<ERZ>] | <Variable>[<ERZ>] | <Constante>[<ERZ>]
+     * <ExpresionRelacional> ::= <CadenaCaracteres>[<ERZ>] | <ValorNumerico>[<ERZ>] | <Identificador>[<ERZ>] | "(" <ExpresionRelacional> ")" [<ERZ>]
      * 
      * @returns Expresion | Token
      */
-    private sigueExpresionRelacional(): Expresion | Token {
+    private sigueExpresionRelacional(): Expresion | Token | ValorNumerico {
 
         let tmpIndexToken = this.indexToken;
-        let tmpExpression: Expresion | Token;
+        let tmpExpression: Expresion | Token | ValorNumerico;
 
-        // <Variable> 
-        tmpExpression = this.sigueVariable();
+        // <CadenaCaracteres>
+        tmpExpression = this.sigueCadenaCaracteres();
         if (tmpExpression !== null) {
-            // <ERZ>
+
+            // [<ERZ>]
             this.cargarSiguienteToken();
+            //tmpIndexToken = this.indexToken;
             const ez = this.sigueERZ();
             if (ez !== null) {
                 ez.operandoA = tmpExpression;
                 return ez;
             } else {
+                this.resetIndexToken(tmpIndexToken);
                 return tmpExpression;
             }
         }
 
-        // <Constante> 
-        tmpExpression = this.sigueConstante();
-        if (tmpExpression !== null) {
-             // <ERZ>
-             this.cargarSiguienteToken();
-             const ez = this.sigueERZ();
-             if (ez !== null) {
-                 ez.operandoA = tmpExpression;
-                 return ez;
-             } else {
-                 return tmpExpression;
-             }
-        }
+        // reseteamos;
+        this.resetIndexToken(tmpIndexToken);
 
         // <ValorNumerico> 
         tmpExpression = this.sigueValorNumerico();
         if (tmpExpression !== null) {
-             // <ERZ>
-             this.cargarSiguienteToken();
-             const ez = this.sigueERZ();
-             if (ez !== null) {
-                 ez.operandoA = tmpExpression;
-                 return ez;
-             } else {
-                 return tmpExpression;
-             }
+            tmpIndexToken = this.indexToken;
+
+            // [<ERZ>]
+            this.cargarSiguienteToken();
+            //tmpIndexToken = this.indexToken;
+            const ez = this.sigueERZ();
+            if (ez !== null) {
+                ez.operandoA = tmpExpression;
+                return ez;
+            } else {
+                this.resetIndexToken(tmpIndexToken);
+                return tmpExpression;
+            }
         }
 
-        // <CadenaCaracteres> 
-        tmpExpression = this.sigueCadenaCaracteres();
+        // reseteamos;
+        this.resetIndexToken(tmpIndexToken);
+
+        // <Identificador>
+        tmpExpression = this.sigueIdentificador();
         if (tmpExpression !== null) {
-             // <ERZ>
-             this.cargarSiguienteToken();
-             const ez = this.sigueERZ();
-             if (ez !== null) {
-                 ez.operandoA = tmpExpression;
-                 return ez;
-             } else {
-                 return tmpExpression;
-             }
+
+            // [<ERZ> ]
+            this.cargarSiguienteToken();
+            //tmpIndexToken = this.indexToken;
+            const ez = this.sigueERZ();
+            if (ez !== null) {
+                ez.operandoA = tmpExpression;
+                return ez;
+            } else {
+                this.resetIndexToken(tmpIndexToken);
+                return tmpExpression;
+            }
         }
+
+        // reseteamos;
+        this.resetIndexToken(tmpIndexToken);
 
         // "(" <ExpresionRelacional> ")"
         if (this.sigueParentesisIzquierdo()) {
@@ -653,14 +737,17 @@ export class AnalizadorSintacticoService {
 
                 this.cargarSiguienteToken();
                 if (this.sigueParentesisDerecho()) {
+                    tmpIndexToken = this.indexToken;
 
-                     // <ERZ>
+                    // <ERZ>
                     this.cargarSiguienteToken();
+                    //tmpIndexToken = this.indexToken;
                     const ez = this.sigueERZ();
                     if (ez !== null) {
                         ez.operandoA = tmpExpression;
                         return ez;
                     } else {
+                        this.resetIndexToken(tmpIndexToken);
                         return tmpExpression;
                     }
                 }
@@ -668,21 +755,19 @@ export class AnalizadorSintacticoService {
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
-
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
     /**
      * metodo que ayuda al teorema de la recursividad por la izquierda
-     * <ELZ> ::= <OperadorLogico> <ExpresionLogica> [<ELZ>]
+     * <ELZ> ::= <OperadorLogico> <ExpresionLogica> [<EZ>]
      * @return Expresion
      */
-    private sigueELZ(): Expresion{
+    private sigueELZ(): Expresion {
 
         let tmpIndexToken = this.indexToken;
-        let tmpExpression: Expresion;
+        let tmpExpression: Expresion = new Expresion();
 
         // <OperadorLogico>
         let operador = this.sigueOperadorLogico();
@@ -693,100 +778,101 @@ export class AnalizadorSintacticoService {
             this.cargarSiguienteToken();
             const tmpExpressionB = this.sigueExpresionLogica();
             if (tmpExpressionB !== null) {
-                    
-                // [<ELZ>]
+                tmpIndexToken = this.indexToken;
+
+                // [<EZ>]
                 this.cargarSiguienteToken();
-                const ez = this.sigueELZ();
+                //tmpIndexToken = this.indexToken;
+                const ez = this.sigueEZ();
                 if (ez !== null) {
                     ez.operandoA = tmpExpressionB;
                     return ez;
                 } else {
+                    this.resetIndexToken(tmpIndexToken);
                     tmpExpression.operandoB = tmpExpressionB;
                     return tmpExpression;
                 }
-                
             }
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
     /**
      * verifica si sigue una expresion Logico
      * 
-     * <ExpresionLogica> ::= <ExpresionLogica> <OperadorLogico> <ExpresionLogica> | <OperadorLogicoNegacion> <ExpresionLogica> |  "("<ExpresionLogica>")" | <CadenaCaracteres> | <ValorNumerico> | <Variable> | <Constante>
-     * <ExpresionLogica> ::= <OperadorLogicoNegacion> <ExpresionLogica> [<ELZ>] |  "("<ExpresionLogica>")" [<ELZ>] | <CadenaCaracteres> [<ELZ>] | <ValorNumerico>[<ELZ>] | <Variable>[<ELZ>] | <Constante>[<ELZ>]
+     * <ExpresionLogica> ::= <CadenaCaracteres> [<ELZ>] | <ValorNumerico>[<ELZ>] | <Identificador>[<ELZ>] | <OperadorLogicoNegacion> <ExpresionLogica> [<ELZ>] | "(" <ExpresionLogica> ")" [<ELZ>]
      * 
      * @returns Expresion | Token
      */
-    private sigueExpresionLogica(): Expresion | Token {
+    private sigueExpresionLogica(): Expresion | Token | ValorNumerico {
 
-        const tmpSubExpresion = new Expresion();
         let tmpIndexToken = this.indexToken;
-        let tmpExpression: Expresion | Token;
+        let tmpExpression: Expresion | Token | ValorNumerico;
+        const tmpSubExpresion = new Expresion();
 
-        // <Variable> 
-        tmpExpression = this.sigueVariable();
+        // <Identificador> 
+        tmpExpression = this.sigueIdentificador();
         if (tmpExpression !== null) {
 
-            // <ELZ>
+            // [<ELZ>]
             this.cargarSiguienteToken();
+            //tmpIndexToken = this.indexToken;
             const ez = this.sigueELZ();
             if (ez !== null) {
                 ez.operandoA = tmpExpression;
                 return ez;
             } else {
+                this.resetIndexToken(tmpIndexToken);
                 return tmpExpression;
             }
         }
 
-        // <Constante> 
-        tmpExpression = this.sigueConstante();
-        if (tmpExpression !== null) {
-            
-            // <ELZ>
-            this.cargarSiguienteToken();
-            const ez = this.sigueELZ();
-            if (ez !== null) {
-                ez.operandoA = tmpExpression;
-                return ez;
-            } else {
-                return tmpExpression;
-            }
-        }
+        // reseteamos;
+        this.resetIndexToken(tmpIndexToken);
 
         // <ValorNumerico> 
         tmpExpression = this.sigueValorNumerico();
         if (tmpExpression !== null) {
-            
-            // <ELZ>
+            tmpIndexToken = this.indexToken;
+
+            // [<ELZ>]
             this.cargarSiguienteToken();
+            //tmpIndexToken = this.indexToken;
             const ez = this.sigueELZ();
             if (ez !== null) {
                 ez.operandoA = tmpExpression;
                 return ez;
             } else {
+                this.resetIndexToken(tmpIndexToken);
                 return tmpExpression;
             }
         }
 
+        // reseteamos;
+        this.resetIndexToken(tmpIndexToken);
+
         // <CadenaCaracteres> 
         tmpExpression = this.sigueCadenaCaracteres();
         if (tmpExpression !== null) {
-            
+
             // <ELZ>
             this.cargarSiguienteToken();
+            //tmpIndexToken = this.indexToken;
             const ez = this.sigueELZ();
             if (ez !== null) {
                 ez.operandoA = tmpExpression;
                 return ez;
             } else {
+                this.resetIndexToken(tmpIndexToken);
                 return tmpExpression;
             }
         }
+
+        // reseteamos;
+        this.resetIndexToken(tmpIndexToken);
 
         // "(" <ExpresionLogica> ")"
         if (this.sigueParentesisIzquierdo()) {
@@ -797,24 +883,25 @@ export class AnalizadorSintacticoService {
 
                 this.cargarSiguienteToken();
                 if (this.sigueParentesisDerecho()) {
+                    tmpIndexToken = this.indexToken;
 
                     // <ELZ>
                     this.cargarSiguienteToken();
+                    //tmpIndexToken = this.indexToken;
                     const ez = this.sigueELZ();
                     if (ez !== null) {
                         ez.operandoA = tmpExpression;
                         return ez;
                     } else {
+                        this.resetIndexToken(tmpIndexToken);
                         return tmpExpression;
                     }
                 }
             }
         }
 
-
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
 
         // <OperadorLogicoNegacion> <ExpresionLogica>
         let operador = this.sigueOperadorLogicoNegacion();
@@ -824,33 +911,32 @@ export class AnalizadorSintacticoService {
             this.cargarSiguienteToken();
             tmpExpression = this.sigueExpresionLogica();
             if (tmpExpression !== null) {
-
                 tmpSubExpresion.operandoB = tmpExpression;
+                tmpIndexToken = this.indexToken;
 
-                // <ELZ>
+                // [<ELZ>]
                 this.cargarSiguienteToken();
+                //tmpIndexToken = this.indexToken;
                 const ez = this.sigueELZ();
                 if (ez !== null) {
                     ez.operandoA = tmpSubExpresion;
                     return ez;
                 } else {
+                    this.resetIndexToken(tmpIndexToken);
                     return tmpSubExpresion;
                 }
             }
         }
 
-
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
-
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
     /**
      * verifica si sigue una expresion de cadena
      * 
-     * <ExpresionCadena> ::= <Expresion> "·" <CadenaCaracteres> | <CadenaCaracteres> | <CadenaCaracteres> "·" <Expresion>
+     * <ExpresionCadena> ::= <CadenaCaracteres> [ "·" <Expresion> ]
      * 
      * @returns Expresion | Token
      */
@@ -859,56 +945,31 @@ export class AnalizadorSintacticoService {
         let tmpIndexToken = this.indexToken;
         let subExpresion: Expresion = new Expresion();
 
-        // <CadenaCaracteres> "·" <Expresion>
+        // <CadenaCaracteres>
         subExpresion.operandoA = this.sigueCadenaCaracteres();
         if (subExpresion.operandoA !== null) {
 
+            // "·"
             this.cargarSiguienteToken();
+            tmpIndexToken = this.indexToken;
             subExpresion.operador = this.sigueOperadorConcatenacion();
             if (subExpresion.operador !== null) {
 
+                // <Expresion>
                 this.cargarSiguienteToken();
                 subExpresion.operandoB = this.sigueExpresion();
                 if (subExpresion.operandoB !== null) {
                     return subExpresion;
                 }
             }
-        }
 
-        // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
-
-
-        // <CadenaCaracteres>
-        subExpresion.operandoA = this.sigueCadenaCaracteres();
-        if (subExpresion.operandoA !== null) {
+            // reseteamos;
+            this.resetIndexToken(tmpIndexToken);
             return subExpresion.operandoA;
         }
 
-
-        // <Expresion> "·" <CadenaCaracteres>
-        subExpresion.operandoA = this.sigueExpresion();
-        if (subExpresion.operandoA !== null) {
-
-            this.cargarSiguienteToken();
-            subExpresion.operador = this.sigueOperadorConcatenacion();
-            if (subExpresion.operador !== null) {
-
-                this.cargarSiguienteToken();
-                subExpresion.operandoB = this.sigueCadenaCaracteres();
-                if (subExpresion.operandoB !== null) {
-                    return subExpresion;
-                }
-            }
-        }
-
-
-
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
-
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -919,30 +980,46 @@ export class AnalizadorSintacticoService {
      * 
      * @returns Expresion
      */
-    private sigueExpresion(): Expresion | Token {
+    private sigueExpresion(): Expresion | Token | ValorNumerico {
 
-        let tmpExpression: Expresion | Token;
+        let tmpIndexToken = this.indexToken;
+        let tmpExpression: Expresion | Token | ValorNumerico;
 
+        // <ExpresionCadena>
+        tmpExpression = this.sigueExpresionCadena();
+        if (tmpExpression !== null) {
+            return tmpExpression;
+        }
+
+        // reseteamos;
+        this.resetIndexToken(tmpIndexToken);
+
+        // <ExpresionAritmetica>
         tmpExpression = this.sigueExpresionAritmetica();
         if (tmpExpression !== null) {
             return tmpExpression;
         }
 
+        // reseteamos;
+        this.resetIndexToken(tmpIndexToken);
+
+        // <ExpresionRelacional>
         tmpExpression = this.sigueExpresionRelacional();
         if (tmpExpression !== null) {
             return tmpExpression;
         }
 
+        // reseteamos;
+        this.resetIndexToken(tmpIndexToken);
+
+        // <ExpresionLogica>
         tmpExpression = this.sigueExpresionLogica();
         if (tmpExpression !== null) {
             return tmpExpression;
         }
-/*
-        tmpExpression = this.sigueExpresionCadena();
-        if (tmpExpression !== null) {
-            return tmpExpression;
-        }
-*/
+
+        // reseteamos;
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -952,7 +1029,6 @@ export class AnalizadorSintacticoService {
      * @returns boolean
      */
     private sigueComa(): boolean {
-        console.info("ta: ", this.tokenActual)
         if (this.tokenActual.categoria === Categoria.COMA) {
             return true
         }
@@ -962,13 +1038,22 @@ export class AnalizadorSintacticoService {
     /**
      * permite verificar si sigue uno de los tokens permitidos para arreglo
      * 
-     * <DatoAsignacionArreglo> ::= <Variable> | <Constante> | <Caracter> | <CadenaCaracteres> | <Arreglo> 
+     * <DatoAsignacionArreglo> ::= <Variable> | <Constante> | <Caracter> | <CadenaCaracteres> | <ValorNumerico> | <Arreglo>
      * 
      * @return Token
      */
-    private sigueDatoAsignacionArreglo(): Token | Arreglo {
+    private sigueDatoAsignacionArreglo(): Token | Arreglo | ValorNumerico {
 
-        let dato: Token | Arreglo = null;
+        let tmpIndexToken = this.indexToken;
+        let dato: Token | Arreglo | ValorNumerico = null;
+
+        // <Arreglo>
+        dato = this.sigueArreglo();
+        if (dato !== null) {
+            return dato;
+        }
+
+        this.resetIndexToken(tmpIndexToken);
 
         // <Variable>
         dato = this.sigueVariable();
@@ -994,13 +1079,14 @@ export class AnalizadorSintacticoService {
             return dato;
         }
 
-        // <Arreglo>
-        dato = this.sigueArreglo();
+        // <ValorNumerico>
+        dato = this.sigueValorNumerico();
         if (dato !== null) {
             return dato;
         }
 
 
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -1011,11 +1097,11 @@ export class AnalizadorSintacticoService {
      * 
      * @return Token
      */
-    private sigueElementosArreglo(): Array<Token | Arreglo> {
+    private sigueElementosArreglo(): Array<Token | Arreglo | ValorNumerico> {
 
         let tmpIndexToken = this.indexToken;
-        let tmpElementos: Array<Token | Arreglo> = [];
-        let tmpDato: Token | Arreglo = null;
+        let tmpElementos: Array<Token | Arreglo | ValorNumerico> = [];
+        let tmpDato: Token | Arreglo | ValorNumerico = null;
 
         do {
 
@@ -1042,14 +1128,14 @@ export class AnalizadorSintacticoService {
 
         } while (tmpDato !== null);
 
-
         if (tmpElementos.length > 0) {
+            // devolvemos el cursor un puesto para que pueda trabajar bien el algoritmo
+            this.resetIndexToken(this.indexToken - 1);
             return tmpElementos;
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -1070,9 +1156,9 @@ export class AnalizadorSintacticoService {
             // <ListaElementosArreglo>
             this.cargarSiguienteToken();
             let tmpElementos = this.sigueElementosArreglo();
+
             if (tmpElementos !== null) {
                 tmpArreglo.elementos = tmpElementos;
-                console.info(this.tokenActual)
                 this.cargarSiguienteToken();
             }
 
@@ -1085,8 +1171,7 @@ export class AnalizadorSintacticoService {
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -1103,16 +1188,16 @@ export class AnalizadorSintacticoService {
         let tmpToken: Token = null;
         const tmpParametro = new Parametro();
 
-        // <DatoAsignacionArreglo>
+        // <TipoDato>
         tmpToken = this.sigueTipoDato();
         if (tmpToken !== null) {
 
             tmpParametro.tipoDato = tmpToken;
 
+            // <Identificador>
             this.cargarSiguienteToken();
             tmpToken = this.sigueIdentificador();
             if (tmpToken !== null) {
-
                 tmpParametro.identificador = tmpToken;
                 return tmpParametro;
             } else {
@@ -1122,8 +1207,7 @@ export class AnalizadorSintacticoService {
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -1146,26 +1230,28 @@ export class AnalizadorSintacticoService {
             tmpDato = this.sigueParametro();
             if (tmpDato !== null) {
                 tmpParametros.push(tmpDato);
-            } else {
-
                 this.cargarSiguienteToken();
+            } else {
 
                 // [“,” <ListaElementosArreglo>]
                 if (this.sigueComa()) {
-
+                    this.cargarSiguienteToken();
                     tmpDato = this.sigueParametro();
                     if (tmpDato !== null) {
                         tmpParametros.push(tmpDato);
+                        this.cargarSiguienteToken();
                     } else {
                         this.agregarError("se esperaba otro paramentro");
                     }
-
+                } else {
+                    // devolvemos un token para que el algoritmo trabaje bien
+                    this.resetIndexToken(this.indexToken - 1);
                 }
             }
 
 
-        } while (tmpDato !== null)
 
+        } while (tmpDato !== null)
 
         if (tmpParametros.length > 0) {
             return tmpParametros;
@@ -1186,13 +1272,16 @@ export class AnalizadorSintacticoService {
      */
     private sigueArgumento(): Argumento {
 
+        let tmpIndexToken = this.indexToken;
         const tmpArgumento = new Argumento();
         tmpArgumento.valor = this.sigueExpresion();
         if (tmpArgumento.valor !== null) {
             return tmpArgumento;
         }
 
-        return tmpArgumento;
+        // reseteamos;
+        this.resetIndexToken(tmpIndexToken);
+        return null;
     }
 
     /**
@@ -1205,46 +1294,40 @@ export class AnalizadorSintacticoService {
     private sigueListaArgumentos(): Array<Argumento> {
 
         let tmpIndexToken = this.indexToken;
-        const tmpArgumentos: Array<Argumento> = [];
-        let tmpDato: Argumento = null;
+        let tmpArgumentos: Array<Argumento> = [];
 
-        do {
+        // <Argumento>
+        let tmpDato: Argumento = this.sigueArgumento();
+        if (tmpDato !== null) {
 
-            // <Argumento>
-            tmpDato = this.sigueArgumento();
-            if (tmpDato !== null) {
-                tmpArgumentos.push(tmpDato);
+            // ["," <ListaArgumentos> ]
+            this.cargarSiguienteToken();
+            if (this.sigueComa()) {
+                let tmpIndexToken2 = this.indexToken;
+
                 this.cargarSiguienteToken();
-            } else {
-
-                
-
-                // ["," <ListaArgumentos> ]
-                if (this.sigueComa()) {
-
-                    this.cargarSiguienteToken();
-                    tmpDato = this.sigueArgumento();
-                    if (tmpDato !== null) {
-                        tmpArgumentos.push(tmpDato);
-                        this.cargarSiguienteToken();
-                    } else {
-                        this.agregarError("se esperaba otro argumento");
-                    }
-
+                const tmpSubArgumentos = this.sigueListaArgumentos();
+                if (tmpSubArgumentos !== null) {
+                    tmpSubArgumentos.unshift(tmpDato);
+                    tmpArgumentos = tmpSubArgumentos;
+                } else {
+                    this.resetIndexToken(tmpIndexToken2);
+                    tmpArgumentos.push(tmpDato);
+                    this.agregarError("se esperaba otro argumento");
                 }
+
+            } else {
+                this.resetIndexToken(tmpIndexToken)
+                tmpArgumentos.push(tmpDato);
             }
-
-
-        } while (tmpDato !== null)
-
+        }
 
         if (tmpArgumentos.length > 0) {
             return tmpArgumentos;
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -1261,7 +1344,6 @@ export class AnalizadorSintacticoService {
         let tmpToken: Token = null;
         const invocacionFuncion = new InvocacionFuncion();
 
-
         // <Identificador>
         tmpToken = this.sigueIdentificador();
         if (tmpToken !== null) {
@@ -1270,29 +1352,33 @@ export class AnalizadorSintacticoService {
             // “(”
             this.cargarSiguienteToken();
             if (this.sigueParentesisIzquierdo()) {
-
+                
+                
 
                 // [<ListaArgumentos>]
                 this.cargarSiguienteToken();
+                let tmpIndexToken2 = this.indexToken;
                 const tmpArgumentos = this.sigueListaArgumentos();
                 if (tmpArgumentos !== null) {
                     invocacionFuncion.argumentos = tmpArgumentos;
                     this.cargarSiguienteToken();
+                } else {
+                    this.resetIndexToken(tmpIndexToken2);
                 }
 
                 // “)”
                 if (this.sigueParentesisDerecho()) {
                     return invocacionFuncion;
                 } else {
-                    this.agregarError("se esperaba parentisis derecho");
+                    this.agregarError("se esperaba parentisis derecho - invocacion funcion");
                 }
+            } else {
+                this.agregarError("se esperaba parentisis izquierdo - invocacion funcion");
             }
         }
 
-
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -1305,63 +1391,6 @@ export class AnalizadorSintacticoService {
             return true;
         }
         return false;
-    }
-
-    /**
-     * Permite verificar si lo que sigue es una Devolucion
-     * 
-     * <Devolucion> ::=  devolucion <expresion> “#” | devolucion <InvocacionFuncion> “#” | devolucion <Variable> “#” | devolucion <Constante> “#”
-     * 
-     * @returns Devolucion
-     */
-    private sigueDevolucion(): Devolucion {
-
-        let tmpDevolucion = new Devolucion();
-        let tmpIndexToken = this.indexToken;
-
-        // devolucion
-        if (this.siguePalabraReservada('devolucion')) {
-
-            this.cargarSiguienteToken();
-
-            // <Constante>
-            tmpDevolucion.valor = this.sigueConstante();
-            if (tmpDevolucion.valor === null) {
-
-                // <Variable>
-                tmpDevolucion.valor = this.sigueVariable();
-                if (tmpDevolucion.valor === null) {
-
-                    // <InvocacionFuncion>
-                    tmpDevolucion.valor = this.sigueInvocacionFuncion();
-                    if (tmpDevolucion.valor === null) {
-
-                        // <expresion>
-                        tmpDevolucion.valor = this.sigueExpresion();
-                    }
-                }
-            }
-
-            if (tmpDevolucion.valor !== null) {
-
-                // “#”
-                this.cargarSiguienteToken();
-                if (this.sigueFinSentencia()) {
-                    return tmpDevolucion;
-                } else {
-                    this.agregarError("se esperaba fin de la sentencia");
-                }
-            } else {
-                this.agregarError("se esperaba expresion o funcion para la devolucion");
-            }
-
-
-        }
-
-        // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
-        return null;
     }
 
     /**
@@ -1382,10 +1411,8 @@ export class AnalizadorSintacticoService {
             return tmpResult;
         }
 
-        
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
 
         // <DatoAsignacionArreglo>
         tmpResult = this.sigueDatoAsignacionArreglo();
@@ -1393,10 +1420,8 @@ export class AnalizadorSintacticoService {
             return tmpResult;
         }
 
-        
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
 
         // <Expresion>
         tmpResult = this.sigueExpresion();
@@ -1404,14 +1429,8 @@ export class AnalizadorSintacticoService {
             return tmpResult;
         }
 
-        
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
-
-        // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -1464,8 +1483,7 @@ export class AnalizadorSintacticoService {
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -1525,8 +1543,7 @@ export class AnalizadorSintacticoService {
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -1540,6 +1557,7 @@ export class AnalizadorSintacticoService {
     private sigueListaDeclaracionesVariables(): Array<DeclaracionVariable | DeclaracionConstante> {
 
         let tmpIndexToken = this.indexToken;
+        let tmpIndexToken2 = this.indexToken;
         const declaraciones: Array<DeclaracionVariable | DeclaracionConstante> = [];
         let declaracion: DeclaracionVariable | DeclaracionConstante;
 
@@ -1555,17 +1573,19 @@ export class AnalizadorSintacticoService {
             if (declaracion !== null) {
                 // [<ListaDeclaracionesVariables>]
                 declaraciones.push(declaracion);
+                tmpIndexToken2 = this.indexToken;
+                this.cargarSiguienteToken();
             }
         } while (declaracion !== null);
 
 
         if (declaraciones.length > 0) {
+            this.resetIndexToken(tmpIndexToken2);
             return declaraciones;
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -1597,7 +1617,6 @@ export class AnalizadorSintacticoService {
                     // “#”
                     this.cargarSiguienteToken();
                     if (this.sigueFinSentencia()) {
-
                         return tmpAsignacion;
                     } else {
                         this.agregarError("se esperaba fin de sentencia");
@@ -1627,6 +1646,7 @@ export class AnalizadorSintacticoService {
     private sigueDeclaracionFuncion(): DeclaracionFuncion {
 
         let tmpIndexToken = this.indexToken;
+        let tmpIndexToken2 = this.indexToken;
         const tmpDeclaracion = new DeclaracionFuncion();
 
         // accion
@@ -1643,10 +1663,14 @@ export class AnalizadorSintacticoService {
 
                     // [<ListaParametros>]
                     this.cargarSiguienteToken();
+                    tmpIndexToken2 = this.indexToken;
                     const tmpParametros = this.sigueListaParametros();
                     if (tmpParametros !== null) {
                         tmpDeclaracion.parametros = tmpParametros;
                         this.cargarSiguienteToken();
+                    } else {
+                        // reseteamos
+                        this.resetIndexToken(tmpIndexToken2);
                     }
 
                     // “)”
@@ -1658,36 +1682,39 @@ export class AnalizadorSintacticoService {
 
                             // [<ListaSentencias>]
                             this.cargarSiguienteToken();
+                            tmpIndexToken2 = this.indexToken;
                             const sentencias = this.sigueListaSentencias();
                             if (sentencias !== null) {
                                 tmpDeclaracion.sentencias = sentencias;
                                 this.cargarSiguienteToken();
+                            } else {
+                                // reseteamos
+                                this.resetIndexToken(tmpIndexToken2);
                             }
 
                             // “}”
                             if (this.sigueLlaveDerecho()) {
                                 return tmpDeclaracion;
                             } else {
-                                this.agregarError("se esperaba llave derecho");
+                                this.agregarError("se esperaba llave derecho - funcion");
                             }
                         } else {
-                            this.agregarError("se esperaba llave izquierdo");
+                            this.agregarError("se esperaba llave izquierdo - funcion");
                         }
                     } else {
-                        this.agregarError("se esperaba parentisis derecho");
+                        this.agregarError("se esperaba parentisis derecho - funcion");
                     }
                 } else {
-                    this.agregarError("se esperaba parentisis izquierdo");
+                    this.agregarError("se esperaba parentisis izquierdo - funcion");
                 }
             } else {
-                this.agregarError("se esperaba identificador de funcion");
+                this.agregarError("se esperaba identificador de funcion - funcion");
             }
         }
 
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -1701,16 +1728,28 @@ export class AnalizadorSintacticoService {
     private sigueListaDeclaracionesFunciones(): Array<DeclaracionFuncion> {
 
         let tmpIndexToken = this.indexToken;
+        let tmpIndexToken2 = this.indexToken;
         const lista: Array<DeclaracionFuncion> = [];
         let declaracion: DeclaracionFuncion = null;
 
+        // [<ListaFunciones>]
         do {
 
             // <DeclaracionFuncion>
             declaracion = this.sigueDeclaracionFuncion();
+
             if (declaracion !== null) {
+
+                tmpIndexToken2 = this.indexToken;
                 lista.push(declaracion);
-                this.cargarSiguienteToken();
+
+                if (this.hayMasTokens()) {
+                    this.cargarSiguienteToken();
+                } else {
+                    declaracion = null;
+                }
+            } else {
+                this.resetIndexToken(tmpIndexToken2);
             }
 
         } while (declaracion !== null);
@@ -1721,8 +1760,7 @@ export class AnalizadorSintacticoService {
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -1739,7 +1777,6 @@ export class AnalizadorSintacticoService {
         const tmpDesicion = new Desicion();
 
         // si
-        this.cargarSiguienteToken();
         if (this.siguePalabraReservada('si')) {
 
             // “(“
@@ -1753,7 +1790,7 @@ export class AnalizadorSintacticoService {
 
                     // “)”
                     this.cargarSiguienteToken();
-                    if (this.sigueParentesisIzquierdo()) {
+                    if (this.sigueParentesisDerecho()) {
 
                         // “{“
                         this.cargarSiguienteToken();
@@ -1761,11 +1798,15 @@ export class AnalizadorSintacticoService {
 
                             // [<ListaSentencias>]
                             this.cargarSiguienteToken();
+                            const indexToken3 = this.indexToken;
                             const tmpSentencias = this.sigueListaSentencias();
                             if (tmpSentencias !== null) {
                                 tmpDesicion.sentencias = tmpSentencias;
                                 this.cargarSiguienteToken();
+                            } else {
+                                this.resetIndexToken(indexToken3);
                             }
+
 
                             // “}“
                             if (this.sigueLlaveDerecho()) {
@@ -1789,8 +1830,7 @@ export class AnalizadorSintacticoService {
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -1822,14 +1862,17 @@ export class AnalizadorSintacticoService {
 
                     // [<ListaSentencias>]
                     this.cargarSiguienteToken();
-                    const sentencias = this.sigueListaSentencias();
-                    if (sentencias !== null) {
-                        tmpDesicionCompuesta.sentenciasSINO = sentencias;
+                    const indexToken3 = this.indexToken;
+                    const tmpSentencias = this.sigueListaSentencias();
+                    if (tmpSentencias !== null) {
+                        tmpDesicionCompuesta.sentencias = tmpSentencias;
                         this.cargarSiguienteToken();
+                    } else {
+                        this.resetIndexToken(indexToken3);
                     }
 
                     // "}"
-                    if (this.sigueLlaveIzquierdo()) {
+                    if (this.sigueLlaveDerecho()) {
                         return tmpDesicionCompuesta;
                     } else {
                         this.agregarError("se esperaba llave derecha");
@@ -1844,8 +1887,7 @@ export class AnalizadorSintacticoService {
 
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -1870,10 +1912,13 @@ export class AnalizadorSintacticoService {
 
                 // [<ListaSentencias>]
                 this.cargarSiguienteToken();
-                const sentencias = this.sigueListaSentencias();
-                if (sentencias !== null) {
-                    tmpCiclo.sentencias = sentencias;
+                const indexToken3 = this.indexToken;
+                const tmpSentencias = this.sigueListaSentencias();
+                if (tmpSentencias !== null) {
+                    tmpCiclo.sentencias = tmpSentencias;
                     this.cargarSiguienteToken();
+                } else {
+                    this.resetIndexToken(indexToken3);
                 }
 
                 // “}” 
@@ -1899,8 +1944,7 @@ export class AnalizadorSintacticoService {
 
                                     // “#”
                                     this.cargarSiguienteToken();
-                                    if (this.sigueParentesisDerecho()) {
-
+                                    if (this.sigueFinSentencia()) {
                                         return tmpCiclo;
                                     } else {
                                         this.agregarError("se esperaba fin de sentencia");
@@ -1928,15 +1972,92 @@ export class AnalizadorSintacticoService {
 
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
+        return null;
+    }
+
+    /**
+     * Permite verificar si lo que sigue es una Devolucion
+     * 
+     * <Devolucion> ::=  devolucion <expresion> “#” | devolucion <InvocacionFuncion> “#” | devolucion <Variable> “#” | devolucion <Constante> “#” | devolucion  <ValorNumerico> “#”
+     * 
+     * @returns Devolucion
+     */
+    private sigueDevolucion(): Devolucion {
+
+        let tmpDevolucion = new Devolucion();
+        let tmpIndexToken = this.indexToken;
+        let tmpIndexToken2 = this.indexToken;
+
+        // devolucion
+        if (this.siguePalabraReservada('devolucion')) {
+            this.cargarSiguienteToken();
+            tmpIndexToken2 = this.indexToken;
+
+            // <expresion>
+            tmpDevolucion.valor = this.sigueExpresion();
+            if (tmpDevolucion.valor === null) {
+
+                // reset cursor
+                this.resetIndexToken(tmpIndexToken2);
+
+                // <InvocacionFuncion>
+                tmpDevolucion.valor = this.sigueInvocacionFuncion();
+                if (tmpDevolucion.valor === null) {
+
+                    // reset cursor
+                    this.resetIndexToken(tmpIndexToken2);
+
+                    // <Constante>
+                    tmpDevolucion.valor = this.sigueConstante();
+                    if (tmpDevolucion.valor === null) {
+
+                        // reset cursor
+                        this.resetIndexToken(tmpIndexToken2);
+
+                        // <Variable>
+                        tmpDevolucion.valor = this.sigueVariable();
+                        if (tmpDevolucion.valor === null) {
+
+                            // reset cursor
+                            this.resetIndexToken(tmpIndexToken2);
+
+                            // <ValorNumerico>
+                            tmpDevolucion.valor = this.sigueValorNumerico();
+                            if (tmpDevolucion.valor === null) {
+
+                                // reset cursor
+                                this.resetIndexToken(tmpIndexToken2);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (tmpDevolucion.valor !== null) {
+                // “#”
+                this.cargarSiguienteToken();
+                if (this.sigueFinSentencia()) {
+                    return tmpDevolucion;
+                } else {
+                    this.agregarError("se esperaba fin de la sentencia");
+                }
+            } else {
+                this.agregarError("se esperaba expresion o funcion para la devolucion");
+            }
+
+
+        }
+
+        // reset cursor
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
     /**
      * permite verificar si lo que sigue es una impresion 
      * 
-     * <Impresion> ::= muestre <expresion> “#” | muestre <Variable> “#” | muestre <Constante> “#” | muestre <InvocacionFuncion> “#”
+     * <Impresion> ::= muestre <expresion> “#” | muestre <Variable> “#” | muestre <Constante> “#” | muestre <InvocacionFuncion> “#” | muestre  <ValorNumerico> “#”
      * 
      * @returns Impresion
      */
@@ -1944,29 +2065,52 @@ export class AnalizadorSintacticoService {
 
         let tmpMuestre = new Impresion();
         let tmpIndexToken = this.indexToken;
+        let tmpIndexToken2 = this.indexToken;
 
         // muestre
         if (this.siguePalabraReservada('muestre')) {
-
             this.cargarSiguienteToken();
+            tmpIndexToken2 = this.indexToken;
 
-            // <Constante>
-            tmpMuestre.valor = this.sigueConstante();
+            // <expresion>
+            tmpMuestre.valor = this.sigueExpresion();
             if (tmpMuestre.valor === null) {
 
-                // <Variable>
-                tmpMuestre.valor = this.sigueVariable();
+                // reset cursor
+                this.resetIndexToken(tmpIndexToken2);
+
+                // <InvocacionFuncion>
+                tmpMuestre.valor = this.sigueInvocacionFuncion();
                 if (tmpMuestre.valor === null) {
 
-                    // <InvocacionFuncion>
-                    tmpMuestre.valor = this.sigueInvocacionFuncion();
+                    // reset cursor
+                    this.resetIndexToken(tmpIndexToken2);
+
+                    // <Constante>
+                    tmpMuestre.valor = this.sigueConstante();
                     if (tmpMuestre.valor === null) {
 
-                        // <expresion>
-                        tmpMuestre.valor = this.sigueExpresion();
+                        // reset cursor
+                        this.resetIndexToken(tmpIndexToken2);
+
+                        // <Variable>
+                        tmpMuestre.valor = this.sigueVariable();
+                        if (tmpMuestre.valor === null) {
+
+                            // reset cursor
+                            this.resetIndexToken(tmpIndexToken2);
+
+                            // <ValorNumerico>
+                            tmpMuestre.valor = this.sigueValorNumerico();
+                            if (tmpMuestre.valor === null) {
+
+                                // reset cursor
+                                this.resetIndexToken(tmpIndexToken);
+                            }
+                        }
                     }
                 }
-            }
+            } 
 
             if (tmpMuestre.valor !== null) {
 
@@ -1984,15 +2128,14 @@ export class AnalizadorSintacticoService {
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
     /**
      * permite verificar si lo que sigue es una lectura
      * 
-     * <Lectura> ::= leer <expresion> | leer <Variable> “#” | leer <Constante> “#” | leer <InvocacionFuncion> “#”
+     * <Lectura> ::= leer <expresion> | leer <Variable> “#” | leer <Constante> “#” | leer <InvocacionFuncion> “#” | leer  <ValorNumerico> “#”
      * 
      * @returns 
      */
@@ -2000,29 +2143,52 @@ export class AnalizadorSintacticoService {
 
         let tmpLectura = new Lectura();
         let tmpIndexToken = this.indexToken;
+        let tmpIndexToken2 = this.indexToken;
 
         // leer
         if (this.siguePalabraReservada('leer')) {
-
             this.cargarSiguienteToken();
+            tmpIndexToken2 = this.indexToken;
 
-            // <Constante>
-            tmpLectura.valor = this.sigueConstante();
+            // <expresion>
+            tmpLectura.valor = this.sigueExpresion();
             if (tmpLectura.valor === null) {
 
-                // <Variable>
-                tmpLectura.valor = this.sigueVariable();
+                // reset cursor
+                this.resetIndexToken(tmpIndexToken2);
+
+                // <InvocacionFuncion>
+                tmpLectura.valor = this.sigueInvocacionFuncion();
                 if (tmpLectura.valor === null) {
 
-                    // <InvocacionFuncion>
-                    tmpLectura.valor = this.sigueInvocacionFuncion();
+                    // reset cursor
+                    this.resetIndexToken(tmpIndexToken2);
+
+                    // <Constante>
+                    tmpLectura.valor = this.sigueConstante();
                     if (tmpLectura.valor === null) {
 
-                        // <expresion>
-                        tmpLectura.valor = this.sigueExpresion();
+                        // reset cursor
+                        this.resetIndexToken(tmpIndexToken2);
+
+                        // <Variable>
+                        tmpLectura.valor = this.sigueVariable();
+                        if (tmpLectura.valor === null) {
+
+                            // reset cursor
+                            this.resetIndexToken(tmpIndexToken2);
+
+                            // <ValorNumerico>
+                            tmpLectura.valor = this.sigueValorNumerico();
+                            if (tmpLectura.valor === null) {
+
+                                // reset cursor
+                                this.resetIndexToken(tmpIndexToken);
+                            }
+                        }
                     }
                 }
-            }
+            } 
 
             if (tmpLectura.valor !== null) {
 
@@ -2036,12 +2202,10 @@ export class AnalizadorSintacticoService {
             } else {
                 this.agregarError("se esperaba valor a leer");
             }
-
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -2085,8 +2249,7 @@ export class AnalizadorSintacticoService {
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -2114,8 +2277,7 @@ export class AnalizadorSintacticoService {
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -2132,58 +2294,6 @@ export class AnalizadorSintacticoService {
         let tmpIndexToken = this.indexToken;
         let tmpSetencia: Sentencia = null;
 
-        // <DesicionCompuesta>
-        tmpSetencia = this.sigueDesicionCompuesta();
-        if (tmpSetencia !== null) {
-            return tmpSetencia;
-        }
-
-        console.info(this.tokenActual);
-
-        // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
-
-        // <Desicion>
-        tmpSetencia = this.sigueDesicion();
-        if (tmpSetencia !== null) {
-            return tmpSetencia;
-        }
-
-        // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
-
-        // <DeclaracionVariable>
-        tmpSetencia = this.sigueDeclaracionVariable();
-        if (tmpSetencia !== null) {
-            return tmpSetencia;
-        }
-
-        // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
-
-        // <DeclaracionConstante>
-        tmpSetencia = this.sigueDeclaracionConstante();
-        if (tmpSetencia !== null) {
-            return tmpSetencia;
-        }
-
-        // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
-
-        // <Asignacion>
-        tmpSetencia = this.sigueAsignacion();
-        if (tmpSetencia !== null) {
-            return tmpSetencia;
-        }
-
-        // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
-
         // <Impresion>
         tmpSetencia = this.sigueImpresion();
         if (tmpSetencia !== null) {
@@ -2191,18 +2301,7 @@ export class AnalizadorSintacticoService {
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
-
-        // <HacerMientras>
-        tmpSetencia = this.sigueHacerMientras();
-        if (tmpSetencia !== null) {
-            return tmpSetencia;
-        }
-
-        // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
 
         // <Devolucion>
         tmpSetencia = this.sigueDevolucion();
@@ -2211,8 +2310,7 @@ export class AnalizadorSintacticoService {
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
 
         // <Lectura>
         tmpSetencia = this.sigueLectura();
@@ -2221,8 +2319,61 @@ export class AnalizadorSintacticoService {
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
+
+        // <DesicionCompuesta>
+        tmpSetencia = this.sigueDesicionCompuesta();
+        if (tmpSetencia !== null) {
+            return tmpSetencia;
+        }
+
+        // reseteamos;
+        this.resetIndexToken(tmpIndexToken);
+
+        // <Desicion>
+        tmpSetencia = this.sigueDesicion();
+        if (tmpSetencia !== null) {
+            return tmpSetencia;
+        }
+
+        // reseteamos;
+        this.resetIndexToken(tmpIndexToken);
+
+        // <DeclaracionVariable>
+        tmpSetencia = this.sigueDeclaracionVariable();
+        if (tmpSetencia !== null) {
+            return tmpSetencia;
+        }
+
+        // reseteamos;
+        this.resetIndexToken(tmpIndexToken);
+
+        // <DeclaracionConstante>
+        tmpSetencia = this.sigueDeclaracionConstante();
+        if (tmpSetencia !== null) {
+            return tmpSetencia;
+        }
+
+        // reseteamos;
+        this.resetIndexToken(tmpIndexToken);
+
+        // <Asignacion>
+        tmpSetencia = this.sigueAsignacion();
+        if (tmpSetencia !== null) {
+            return tmpSetencia;
+        }
+
+        // reseteamos;
+        this.resetIndexToken(tmpIndexToken);
+
+        // <HacerMientras>
+        tmpSetencia = this.sigueHacerMientras();
+        if (tmpSetencia !== null) {
+            return tmpSetencia;
+        }
+
+        // reseteamos;
+        this.resetIndexToken(tmpIndexToken);
 
         // <InvocacionFuncion>
         tmpSetencia = this.sigueInvocacionFuncion();
@@ -2231,8 +2382,7 @@ export class AnalizadorSintacticoService {
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
 
         // <Incremento>
         tmpSetencia = this.sigueIncremento();
@@ -2241,8 +2391,7 @@ export class AnalizadorSintacticoService {
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
 
         // <Decremento>
         tmpSetencia = this.sigueDecremento();
@@ -2251,8 +2400,7 @@ export class AnalizadorSintacticoService {
         }
 
         // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
+        this.resetIndexToken(tmpIndexToken);
         return null;
     }
 
@@ -2270,24 +2418,25 @@ export class AnalizadorSintacticoService {
         let tmpSentencia: Sentencia = null;
 
         do {
-
             // <Sentencia>
             tmpSentencia = this.sigueSentencia();
             if (tmpSentencia !== null) {
+                tmpIndexToken = this.indexToken;
                 lista.push(tmpSentencia);
-                this.cargarSiguienteToken();
+                if (!this.cargarSiguienteToken()) {
+                    tmpSentencia == null;
+                }
             }
 
         } while (tmpSentencia !== null);
 
+        // reseteamos;
+        this.resetIndexToken(tmpIndexToken);
 
         if (lista.length > 0) {
             return lista;
         }
 
-        // reseteamos;
-        this.indexToken = tmpIndexToken;
-        this.tokenActual = this.tokens[this.indexToken];
         return null;
     }
 
@@ -2298,7 +2447,7 @@ export class AnalizadorSintacticoService {
      * 
      * @returns UnidadCompilacion
      */
-    public ejecutarUnidadCompilacion(): UnidadCompilacion {
+    private sigueUnidadCompilacion(): UnidadCompilacion {
 
         let tmpIndexToken = this.indexToken;
         const tmpComUni = new UnidadCompilacion();
@@ -2307,35 +2456,44 @@ export class AnalizadorSintacticoService {
         const tmpdeclaracionesVariables = this.sigueListaDeclaracionesVariables();
         if (tmpdeclaracionesVariables !== null) {
             tmpComUni.declaracionesVariables = tmpdeclaracionesVariables;
-            this.cargarSiguienteToken();
+            if (!this.cargarSiguienteToken()) {
+                return tmpComUni;
+            } else {
+                tmpIndexToken = this.indexToken;
+            }
         } else {
             // reseteamos;
-            this.indexToken = tmpIndexToken;
-            this.tokenActual = this.tokens[this.indexToken];
+            this.resetIndexToken(tmpIndexToken);
         }
 
         // [<ListaFunciones>]
         const tmpFunciones = this.sigueListaDeclaracionesFunciones();
         if (tmpFunciones !== null) {
             tmpComUni.funciones = tmpFunciones;
-            this.cargarSiguienteToken();
+            if (!this.cargarSiguienteToken()) {
+                return tmpComUni;
+            } else {
+                tmpIndexToken = this.indexToken;
+            }
         } else {
             // reseteamos;
-            this.indexToken = tmpIndexToken;
-            this.tokenActual = this.tokens[this.indexToken];
+            this.resetIndexToken(tmpIndexToken);
         }
+
 
         // [<ListaSentencias>]
         const tmpSentencias = this.sigueListaSentencias();
         if (tmpSentencias !== null) {
             tmpComUni.sentencias = tmpSentencias;
-            this.cargarSiguienteToken();
+            if (!this.cargarSiguienteToken()) {
+                return tmpComUni;
+            } else {
+                tmpIndexToken = this.indexToken;
+            }
         } else {
             // reseteamos;
-            this.indexToken = tmpIndexToken;
-            this.tokenActual = this.tokens[this.indexToken];
+            this.resetIndexToken(tmpIndexToken);
         }
-
 
         return tmpComUni;
     }

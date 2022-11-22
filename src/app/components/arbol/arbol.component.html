@@ -1,1 +1,17 @@
-<p>arbol works!</p>
+<ng-container *ngIf="nodo != null">
+    <strong  (click)="toogleVisibility()">
+        <ng-container *ngIf="nodo.hijos.length > 0">
+            <i class="fa-solid fa-circle-arrow-right" *ngIf="isHidden"></i> 
+            <i class="fa-solid fa-circle-arrow-down" *ngIf="!isHidden"></i>
+        </ng-container>
+        <ng-container *ngIf="nodo.hijos.length == 0">
+            &nbsp;&nbsp;&nbsp;&nbsp;
+        </ng-container>
+        {{nodo.nombre}}
+    </strong>
+    <ul [ngClass]="{'open': !isHidden, 'closed': isHidden}" >
+        <li *ngFor="let subNode of nodo.hijos">
+            <app-arbol [nodo]="subNode" [level]="level + 1" ></app-arbol>
+        </li>
+    </ul>
+</ng-container>
